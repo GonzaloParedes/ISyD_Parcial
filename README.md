@@ -1,6 +1,7 @@
 # ISyD_Parcial
 
 ### Estructura del repositorio y responsabilidades
+
 ├─ .github/workflows/
 │  ├─ ci_pipeline.yml        # CI: corre tests automáticamente en cada PR → main
 │  └─ cd_release.yml         # CD: despliegue automático al hacer merge a production
