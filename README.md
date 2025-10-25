@@ -3,7 +3,6 @@
 ### Estructura del repositorio y responsabilidades
 
 '''
-.
 ├─ .github/workflows/
 │  ├─ ci_pipeline.yml        # CI: corre tests automáticamente en cada PR → main
 │  └─ cd_release.yml         # CD: despliegue automático al hacer merge a production
@@ -18,7 +17,6 @@
 ├─ requirements.txt          # Dependencias (FastAPI, Uvicorn, PyTest, etc.)
 ├─ data.json                 # “Mini-DB” en JSON (persistencia simple para la demo)
 └─ main.py                   # App FastAPI: endpoints + orquestación de estrategias
-
 '''
 
 ## Descripción rápida
