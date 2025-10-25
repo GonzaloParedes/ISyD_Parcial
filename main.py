@@ -1,19 +1,20 @@
 import json
+from fastapi import FastAPI, HTTPException
+from typing import Protocol
 
-from fastapi import FastAPI
+from clases.creditCardPayment import CreditCardPayment
+from clases.paypalPayment import PaypalPayment
+
 
 STATUS = "status"
 AMOUNT = "amount"
 PAYMENT_METHOD = "payment_method"
-
 STATUS_REGISTRADO = "REGISTRADO"
 STATUS_PAGADO = "PAGADO"
 STATUS_FALLIDO = "FALLIDO"
-
 DATA_PATH = "data.json"
 
 app = FastAPI()
-
 
 def load_all_payments():
     with open(DATA_PATH, "r") as f:
@@ -27,7 +28,7 @@ def save_all_payments(data):
 
 
 def load_payment(payment_id):
-    data = load_all_payments()[payment_id]
+    data = load_all_payments()[str(payment_id)]
     return data
 
 
@@ -46,34 +47,91 @@ def save_payment(payment_id, amount, payment_method, status):
     save_payment_data(payment_id, data)
 
 
-“””
-# Ejemplo de uso:
-# Actualizando el status de un pago:
-data = load_payment(payment_id)
-data[STATUS] = STATUS_PAGADO
-save_payment_data(payment_id, data)
-“””
+@app.post("/payments/{payment_id}")
+async def register_payment(payment_id: str, amount: float, payment_method: str):
+    """Registrar: crea un pago nuevo en estado REGISTRADO.
+
+    Si el payment_id ya existe devuelve 400.
+    """
+    all_data = load_all_payments()
+    if str(payment_id) in all_data:
+        raise HTTPException(status_code=400, detail="payment_id already exists")
+
+    save_payment(payment_id, amount, payment_method, STATUS_REGISTRADO)
+    return {"payment_id": payment_id, "status": STATUS_REGISTRADO}
+
+
+@app.post("/payments/{payment_id}/update")
+async def update_payment(payment_id: str, amount: float, payment_method: str):
+    """Actualiza la información de un pago existente.
+
+    Solo permite actualizar si el pago existe y está en estado REGISTRADO.
+    """
+    all_data = load_all_payments()
+    if str(payment_id) not in all_data:
+        raise HTTPException(status_code=404, detail="payment_id not found")
+
+    data = all_data[str(payment_id)]
+    if data.get(STATUS) != STATUS_REGISTRADO:
+        raise HTTPException(status_code=400, detail="Only REGISTRADO payments can be updated")
+
+    data[AMOUNT] = amount
+    data[PAYMENT_METHOD] = payment_method
+
+    save_payment_data(payment_id, data)
+    return {"payment_id": payment_id, "status": data[STATUS]}
+
+"""
+Registrar: El usuario registra un pago con un id, monto y un método de pago. Este pago se crea en estado "REGISTRADO".
+Pagar: El sistema valida el pago en base al método seleccionado. Si la validación es exitosa, el pago pasa al estado "PAGADO" sino al estado "FALLIDO".
+Revertir: Cambia un pago en estado FALLIDO a estado REGISTRADO.
+Updatear: Cambia los atributos de un pago si y solo si está en estado REGISTRADO.
+"""
+
+# Registry of available payment strategies
+payments = {
+    "credit_card": CreditCardPayment(),
+    "paypal": PaypalPayment(),
+}
+
+
+@app.post("/payments/{payment_id}/pay")
+async def pay_payment(payment_id: str):
+    """
+    Marca un pago como pagado (o FALLIDO si la validación falla).
+    """
+    data = load_payment(payment_id)
+    method = data.get(PAYMENT_METHOD)
+
+    strategy = payments.get(method)
+    if strategy is None:
+        # Unknown payment method -> mark as failed
+        data[STATUS] = STATUS_FALLIDO
+    else:
+        success = strategy.validate(data)
+        data[STATUS] = STATUS_PAGADO if success else STATUS_FALLIDO
+
+    # persist the updated status
+    save_payment_data(payment_id, data)
+
+    # return the updated status to the caller
+    return {"payment_id": payment_id, "status": data[STATUS]}
+
+
+@app.post("/payments/{payment_id}/revert")
+async def revert_payment(payment_id: str):
+    """
+    Marca un pago como revertido (REGISTRADO si estaba FALLIDO).
+    """
+    data = load_payment(payment_id)
+    estado_actual = data[STATUS]
+
+    if estado_actual == STATUS_FALLIDO:
+        data[STATUS] = STATUS_REGISTRADO
+
+    save_payment_data(payment_id, data)
+    return {"payment_id": payment_id, "status": data[STATUS]}
 
 
 
-# Endpoints a implementar:
-# * GET en el path /payments que retorne todos los pagos.
-# * POST en el path /payments/{payment_id} que registre un nuevo pago.
-# * POST en el path /payments/{payment_id}/update que cambie los parametros de una pago (amount, payment_method)
-# * POST en el path /payments/{payment_id}/pay que intente.
-# * POST en el path /payments/{payment_id}/revert que revertir el pago.
 
-
-“””
-# Ejemplos:
-
-@app.get("/path/{arg_1}")
-async def endpoint_a(arg_1: str, arg_2: float):
-    # Este es un endpoint GET que recibe un argumento (arg_1) por path y otro por query (arg_2).
-    return {}
-
-@app.post("/path/{arg_1}/some_action")
-async def endpoint_b(arg_1: str, arg_2: float, arg_3: str):
-    # Este es un endpoint POST que recibe un argumento (arg_1) por path y otros dos por query (arg_2 y arg_3).
-    return {}
-“””
