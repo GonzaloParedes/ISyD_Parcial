@@ -13,6 +13,11 @@ STATUS_REGISTRADO = "REGISTRADO"
 STATUS_PAGADO = "PAGADO"
 STATUS_FALLIDO = "FALLIDO"
 DATA_PATH = "data.json"
+# Registry of available payment strategies
+payments = {
+    "credit_card": CreditCardPayment(),
+    "paypal": PaypalPayment(),
+}
 
 app = FastAPI()
 
@@ -80,20 +85,6 @@ async def update_payment(payment_id: str, amount: float, payment_method: str):
 
     save_payment_data(payment_id, data)
     return {"payment_id": payment_id, "status": data[STATUS]}
-
-"""
-Registrar: El usuario registra un pago con un id, monto y un método de pago. Este pago se crea en estado "REGISTRADO".
-Pagar: El sistema valida el pago en base al método seleccionado. Si la validación es exitosa, el pago pasa al estado "PAGADO" sino al estado "FALLIDO".
-Revertir: Cambia un pago en estado FALLIDO a estado REGISTRADO.
-Updatear: Cambia los atributos de un pago si y solo si está en estado REGISTRADO.
-"""
-
-# Registry of available payment strategies
-payments = {
-    "credit_card": CreditCardPayment(),
-    "paypal": PaypalPayment(),
-}
-
 
 @app.post("/payments/{payment_id}/pay")
 async def pay_payment(payment_id: str):
