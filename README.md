@@ -25,12 +25,12 @@
 Contiene la aplicación FastAPI. Define los endpoints de la API y, cuando se requiere validar/ejecutar un pago, selecciona la estrategia apropiada en función de payment_method (ej.: "credit_card", "paypal"). También gestiona la lectura/escritura de data.json como almacenamiento mínimo.
 
 # data.json
-Archivo JSON usado como persistencia simple (clave = payment_id). Útil para la práctica: evita montar una base de datos. En producción se reemplazaría por una DB real.
+Archivo JSON usado como persistencia simple (clave = payment_id). Útil para esta práctica: evita montar una base de datos. En producción se reemplazaría por una DB real.
 
 # clases/paymentStategy.py
-Define la interfaz/base del Patrón Strategy (por ej., métodos validate(...) y/o pay(...)). Esto permite abrir el sistema a nuevos medios de pago sin tocar la lógica del resto de la app (principio OCP).
+Define la interfaz/base del Patrón Strategy (por ej., métodos validate(...). Esto permite abrir el sistema a nuevos medios de pago sin tocar la lógica del resto de la app.
 
-Nota: el archivo se llama paymentStategy.py (sin “r”). Si el equipo lo prefiere, conviene renombrarlo a paymentStrategy.py para claridad, ajustando los imports.
+Nota: el archivo se llama paymentStategy.py
 
 # clases/creditCardPayment.py
 Implementa la estrategia de Tarjeta de Crédito. Reglas típicas de la consigna:
@@ -51,7 +51,7 @@ Conjunto de tests unitarios (PyTest) para endpoints y/o reglas. Se ejecutan loca
 Pipeline de CI: al crear un Pull Request hacia main, instala dependencias y ejecuta los tests. El estado de los checks aparece en el PR.
 
 .github/workflows/cd_release.yml
-Pipeline de CD/Release: al hacer merge en production, corre el flujo de despliegue (por ejemplo vía SSH o al proveedor elegido). Requiere secrets configurados en Settings → Actions → Secrets.
+Pipeline de CD/Release: al hacer merge en production, corre el flujo de despliegue. 
 
 # requirements.txt
 Versiona las dependencias para que CI/CD y los entornos locales sean reproducibles.
@@ -77,17 +77,17 @@ classDiagram
 
     main.py --> PaymentStrategy : selecciona según payment_method
 
-### Cómo se conectan las piezas (vista rápida)
+### Cómo se conectan las piezas
 
-main.py recibe la request (ej.: registrar, pagar, updatear).
+1) main.py recibe la request (ej.: registrar, pagar, updatear).
 
-Selecciona la estrategia según payment_method.
+2) Selecciona la estrategia según payment_method.
 
-Invoca validate(...)/pay(...) de la estrategia concreta.
+3) Invoca validate(...)/pay(...) de la estrategia concreta.
 
-Persistencia y estado se almacenan en data.json.
+4) Persistencia y estado se almacenan en data.json.
 
-Tests verifican tanto endpoints como reglas de CreditCardPayment/PaypalPayment.
+5) Tests verifican tanto endpoints como reglas de CreditCardPayment/PaypalPayment.
 
 CI corre los tests en cada PR → main.
 CD despliega al hacer merge a production.
