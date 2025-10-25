@@ -1,3 +1,4 @@
+'''
 import json
 
 from fastapi import FastAPI
@@ -77,3 +78,28 @@ async def endpoint_b(arg_1: str, arg_2: float, arg_3: str):
     # Este es un endpoint POST que recibe un argumento (arg_1) por path y otros dos por query (arg_2 y arg_3).
     return {}
 “””
+'''
+
+import json, os
+from fastapi import FastAPI
+
+DATA_PATH = "data.json"
+
+app = FastAPI(title="Payments API", version="0.1.0")
+
+def read_db() -> dict:
+    """Devuelve el contenido de data.json como dict. Crea {} si no existe/corrupto."""
+    if not os.path.exists(DATA_PATH):
+        with open(DATA_PATH, "w") as f:
+            json.dump({}, f)
+    try:
+        with open(DATA_PATH, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+@app.get("/payments")
+async def get_payments():
+    """Lista todos los pagos."""
+    return read_db()
