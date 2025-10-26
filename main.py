@@ -1,10 +1,10 @@
 import json
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from typing import Protocol
 
 from clases.creditCardPayment import CreditCardPayment
 from clases.paypalPayment import PaypalPayment
-
+from data_repository import JsonPaymentsRepository
 
 STATUS = "status"
 AMOUNT = "amount"
@@ -20,6 +20,9 @@ payments = {
 }
 
 app = FastAPI()
+
+def get_repo():
+    return JsonPaymentsRepository(DATA_PATH)
 
 def load_all_payments():
     with open(DATA_PATH, "r") as f:
@@ -53,26 +56,27 @@ def save_payment(payment_id, amount, payment_method, status):
 
 
 @app.post("/payments/{payment_id}")
-async def register_payment(payment_id: str, amount: float, payment_method: str):
+async def register_payment(payment_id: str, amount: float, payment_method: str,repo = Depends(get_repo)):
     """Registrar: crea un pago nuevo en estado REGISTRADO.
 
     Si el payment_id ya existe devuelve 400.
     """
-    all_data = load_all_payments()
+    all_data = repo.get_all()
     if str(payment_id) in all_data:
         raise HTTPException(status_code=400, detail="payment_id already exists")
 
-    save_payment(payment_id, amount, payment_method, STATUS_REGISTRADO)
+    payload = {AMOUNT: amount, PAYMENT_METHOD: payment_method, STATUS: STATUS_REGISTRADO}
+    repo.upsert(str(payment_id), payload)
     return {"payment_id": payment_id, "status": STATUS_REGISTRADO}
 
 
 @app.post("/payments/{payment_id}/update")
-async def update_payment(payment_id: str, amount: float, payment_method: str):
+async def update_payment(payment_id: str, amount: float, payment_method: str,repo = Depends(get_repo)):
     """Actualiza la información de un pago existente.
 
     Solo permite actualizar si el pago existe y está en estado REGISTRADO.
     """
-    all_data = load_all_payments()
+    all_data = repo.get_all()
     if str(payment_id) not in all_data:
         raise HTTPException(status_code=404, detail="payment_id not found")
 
@@ -82,49 +86,43 @@ async def update_payment(payment_id: str, amount: float, payment_method: str):
 
     data[AMOUNT] = amount
     data[PAYMENT_METHOD] = payment_method
-
-    save_payment_data(payment_id, data)
+    repo.upsert(str(payment_id), data)
     return {"payment_id": payment_id, "status": data[STATUS]}
 
 @app.post("/payments/{payment_id}/pay")
-async def pay_payment(payment_id: str):
-    """
-    Marca un pago como pagado (o FALLIDO si la validación falla).
-    """
-    data = load_payment(payment_id)
-    method = data.get(PAYMENT_METHOD)
+async def pay_payment(payment_id: str, repo = Depends(get_repo)):
+    data = repo.get(str(payment_id))
+    all_data = repo.get_all()
 
-    strategy = payments.get(method)
-    if strategy is None:
-        # Unknown payment method -> mark as failed
-        data[STATUS] = STATUS_FALLIDO
-    else:
-        success = strategy.validate(data)
-        data[STATUS] = STATUS_PAGADO if success else STATUS_FALLIDO
+    # Copia en memoria; no afecta lo persistido
+    payment_for_validation = {**data, "id": str(payment_id)}
+    
+    strategy = payments.get(payment_for_validation.get("payment_method"))
+    ok = strategy.validate(payment_for_validation, context=all_data) if strategy else False
 
-    # persist the updated status
-    save_payment_data(payment_id, data)
-
-    # return the updated status to the caller
-    return {"payment_id": payment_id, "status": data[STATUS]}
-
+    payment_for_validation["status"] = "PAGADO" if ok else "FALLIDO"
+    # Persistimos SIN el id extra
+    updated_payment  = dict(data)
+    updated_payment ["status"] = payment_for_validation["status"]
+    repo.upsert(str(payment_id), updated_payment )
+    return {"payment_id": payment_id, "status": payment_for_validation["status"]}
 
 @app.post("/payments/{payment_id}/revert")
-async def revert_payment(payment_id: str):
+async def revert_payment(payment_id: str,repo = Depends(get_repo)):
     """
     Marca un pago como revertido (REGISTRADO si estaba FALLIDO).
     """
-    data = load_payment(payment_id)
+    data = repo.get(str(payment_id))
     estado_actual = data[STATUS]
 
     if estado_actual == STATUS_FALLIDO:
         data[STATUS] = STATUS_REGISTRADO
 
-    save_payment_data(payment_id, data)
+    repo.upsert(str(payment_id), data)
     return {"payment_id": payment_id, "status": data[STATUS]}
 
 @app.get("/payments")
-async def get_payments():
+async def get_payments(repo = Depends(get_repo)):
     """Lista todos los pagos."""
-    payments = load_all_payments
-    return payments
+    all_data = repo.get_all()
+    return all_data
