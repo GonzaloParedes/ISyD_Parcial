@@ -1,4 +1,4 @@
-# ISyD_Parcial
+# ISyD_Parcial - Gonzalo Paredes y David Tobares - 25.10.25 
 
 ### Estructura del repositorio y responsabilidades
 
