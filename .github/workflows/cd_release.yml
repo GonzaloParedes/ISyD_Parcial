@@ -1,29 +1,80 @@
-name: CD Release Pipeline
+name: CD Release & Deploy
 
 on:
   push:
+    branches:
+      - main                 # deploy automático al merge/push en main
     tags:
-      - 'v*.*.*' # Dispara cuando se hace push de un tag que empiece con "v" (ej. v1.0.0)
+      - 'v*.*.*'             # crea Release cuando pusheás un tag tipo v1.2.3
+
 permissions:
   contents: write
-  
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
 jobs:
+  # 1) GitHub Release SOLO cuando el push es un tag
   create-github-release:
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Token automático para interactuar con la API de GitHub
-      with:
-        tag_name: ${{ github.ref }}
-        release_name: Release ${{ github.ref }}
-        body: |
-          Nueva versión liberada: ${{ github.ref }}
-          Este release fue generado automáticamente por el pipeline de CD.
-        draft: false
-        prerelease: false
+      - name: Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}        # v1.2.3
+          release_name: Release ${{ github.ref_name }}
+          body: |
+            Nueva versión: ${{ github.ref_name }}
+            Generado automáticamente por CD.
+          draft: false
+          prerelease: false
+
+  # 2) Deploy a Render SOLO cuando el push es a main
+  deploy-to-render:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # opcional: si usás Environments, activalo y guardá los secrets ahí
+    # environment: production
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+      COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - name: Trigger Render deploy (commit de main)
+        id: trigger
+        run: |
+          set -e
+          RESP=$(curl -s -X POST "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"clearCache\": false, \"commitId\": \"${COMMIT_SHA}\"}")
+          echo "$RESP"
+          echo "deploy_id=$(echo "$RESP" | jq -r '.id')" >> $GITHUB_OUTPUT
+
+      - name: Wait until deploy is live
+        run: |
+          set -e
+          DEPLOY_ID="${{ steps.trigger.outputs.deploy_id }}"
+          if [ -z "$DEPLOY_ID" ] || [ "$DEPLOY_ID" = "null" ]; then
+            echo "No se obtuvo deploy_id de Render"; exit 1
+          fi
+          echo "Esperando deploy $DEPLOY_ID ..."
+          for i in $(seq 1 90); do
+            STATUS_JSON=$(curl -s -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              "https://api.render.com/v1/deploys/${DEPLOY_ID}")
+            PHASE=$(echo "$STATUS_JSON" | jq -r '.status')
+            echo "Intento $i → status=$PHASE"
+            if [ "$PHASE" = "live" ]; then
+              echo "✅ Deploy live"; exit 0
+            elif [ "$PHASE" = "failed" ]; then
+              echo "❌ Deploy failed"; echo "$STATUS_JSON"; exit 1
+            fi
+            sleep 10
+          done
+          echo "⏱ Timeout esperando el deploy"; exit 1
