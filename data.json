@@ -1,8 +1,8 @@
 {
     "A001": {
-        "amount": 5000.0,
-        "payment_method": "credit card",
-        "status": "REGISTRADO"
+        "amount": 1250.5,
+        "payment_method": "credit_card",
+        "status": "PAGADO"
     },
     "A002": {
         "amount": 980.0,
@@ -12,6 +12,6 @@
     "A003": {
         "amount": 150.0,
         "payment_method": "credit_card",
-        "status": "FALLIDO"
+        "status": "REGISTRADO"
     }
-      }
+}
