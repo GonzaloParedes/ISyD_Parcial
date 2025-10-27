@@ -82,7 +82,7 @@ main.py --> PaymentStrategy : selecciona según payment_method
 
 2. Selecciona la estrategia según payment_method.
 
-3. Invoca validate(...)/pay(...) de la estrategia concreta.
+3. Invoca validate(...) de la estrategia concreta.
 
 4. Persistencia y estado se almacenan en data.json.
 
