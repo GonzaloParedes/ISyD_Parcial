@@ -24,36 +24,11 @@ app = FastAPI()
 def get_repo():
     return JsonPaymentsRepository(DATA_PATH)
 
-def load_all_payments():
-    with open(DATA_PATH, "r") as f:
-        data = json.load(f)
-    return data
-
-
-def save_all_payments(data):
-    with open(DATA_PATH, "w") as f:
-        json.dump(data, f, indent=4)
-
-
-def load_payment(payment_id):
-    data = load_all_payments()[str(payment_id)]
-    return data
-
-
-def save_payment_data(payment_id, data):
-    all_data = load_all_payments()
-    all_data[str(payment_id)] = data
-    save_all_payments(all_data)
-
-
-def save_payment(payment_id, amount, payment_method, status):
-    data = {
-        AMOUNT: amount,
-        PAYMENT_METHOD: payment_method,
-        STATUS: status,
-    }
-    save_payment_data(payment_id, data)
-
+@app.get("/payments")
+async def get_payments(repo = Depends(get_repo)):
+    """Lista todos los pagos."""
+    all_data = repo.get_all()
+    return all_data
 
 @app.post("/payments/{payment_id}")
 async def register_payment(payment_id: str, amount: float, payment_method: str,repo = Depends(get_repo)):
@@ -91,38 +66,40 @@ async def update_payment(payment_id: str, amount: float, payment_method: str,rep
 
 @app.post("/payments/{payment_id}/pay")
 async def pay_payment(payment_id: str, repo = Depends(get_repo)):
-    data = repo.get(str(payment_id))
-    all_data = repo.get_all()
+    """Intenta pagar un registro aplicando la validación del método."""
+    try:
+        current_payment = repo.get(str(payment_id))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
 
-    # Copia en memoria; no afecta lo persistido
-    payment_for_validation = {**data, "id": str(payment_id)}
-    
-    strategy = payments.get(payment_for_validation.get("payment_method"))
-    ok = strategy.validate(payment_for_validation, context=all_data) if strategy else False
+    all_payments = repo.get_all()
 
-    payment_for_validation["status"] = "PAGADO" if ok else "FALLIDO"
-    # Persistimos SIN el id extra
-    updated_payment  = dict(data)
-    updated_payment ["status"] = payment_for_validation["status"]
-    repo.upsert(str(payment_id), updated_payment )
-    return {"payment_id": payment_id, "status": payment_for_validation["status"]}
+    # Copia en memoria para validación (no se persiste 'id')
+    payment_for_validation = {**current_payment, "id": str(payment_id)}
+
+    method = payment_for_validation.get(PAYMENT_METHOD)          # usar constante
+    strategy = payments.get(method)
+    is_valid = strategy.validate(payment_for_validation, context=all_payments) if strategy else False
+
+    updated = dict(current_payment)
+    updated[STATUS] = STATUS_PAGADO if is_valid else STATUS_FALLIDO
+    repo.upsert(str(payment_id), updated)
+    return {"payment_id": payment_id, "status": updated[STATUS]}
 
 @app.post("/payments/{payment_id}/revert")
 async def revert_payment(payment_id: str,repo = Depends(get_repo)):
     """
     Marca un pago como revertido (REGISTRADO si estaba FALLIDO).
     """
-    data = repo.get(str(payment_id))
-    estado_actual = data[STATUS]
+    try:
+        data = repo.get(str(payment_id))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="payment_id not found")
 
-    if estado_actual == STATUS_FALLIDO:
+    # Idempotente: solo cambia FALLIDO -> REGISTRADO, si no, se mantiene
+    if data.get(STATUS) == STATUS_FALLIDO:
         data[STATUS] = STATUS_REGISTRADO
+        repo.upsert(str(payment_id), data)
 
-    repo.upsert(str(payment_id), data)
     return {"payment_id": payment_id, "status": data[STATUS]}
 
-@app.get("/payments")
-async def get_payments(repo = Depends(get_repo)):
-    """Lista todos los pagos."""
-    all_data = repo.get_all()
-    return all_data
