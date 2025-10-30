@@ -2,99 +2,68 @@ name: CD Release & Deploy
 
 on:
   push:
-    branches: [ main ]
-    tags: [ 'v*..' ]
+    tags:
+      - 'v*.*.*'    # ej: v1.2.3
 
 permissions:
-  contents: write
+  contents: write   # necesario para pushear a production desde Actions
 
 concurrency:
-  group: deploy-main
+  group: release-sync
   cancel-in-progress: true
 
 jobs:
-  # 1) GitHub Release SOLO cuando el push es un tag
+  # 1) Crear el Release de GitHub cuando se pushea un tag (v1.2.3)
   create-github-release:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    # opcional: si usás Environments, activalo y guardá los secrets ahí
-    # environment: production
-    env:
-      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
-      COMMIT_SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Create Release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}          # v1.2.3
           release_name: Release ${{ github.ref_name }}
           body: |
             Nueva versión: ${{ github.ref_name }}
-            Generado automáticamente por CD.
+            Generado automáticamente.
           draft: false
           prerelease: false
 
-  deploy-to-render:
-    if: github.ref == 'refs/heads/main'
+  # 2) Adelantar la rama production hasta ese tag (fast-forward)
+  promote-production:
+    needs: create-github-release
     runs-on: ubuntu-latest
-    env:
-      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
-      COMMIT_SHA: ${{ github.sha }}
     steps:
-      - name: Ensure jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # necesito historia completa para merge-base y ff-only
 
-      - name: Trigger Render deploy (commit de main)
-        id: trigger
+      - name: Configure git author
         run: |
-          set -euo pipefail
-          # Validar secrets presentes
-          : "${RENDER_API_KEY:?Falta RENDER_API_KEY}"
-          : "${RENDER_SERVICE_ID:?Falta RENDER_SERVICE_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Body mínimo. En general NO hace falta commitId.
-          BODY='{}'
-          # Si querés forzar commitId, descomentá:
-          # BODY=$(jq -n --arg c "$COMMIT_SHA" '{commitId:$c}')
+      - name: Fetch branches
+        run: |
+          git fetch origin main production --prune
 
-          # Llamar a Render y fallar si HTTP != 2xx
-          RESP=$(curl -fsS -X POST "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
-            -H "Authorization: Bearer ${RENDER_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json" \
-            -d "$BODY")
-
-          echo "Respuesta Render: $RESP"
-
-          DEPLOY_ID=$(echo "$RESP" | jq -r '.id // empty')
-          if [ -z "$DEPLOY_ID" ]; then
-            MSG=$(echo "$RESP" | jq -r '.message? // .error? // empty')
-            echo "No se obtuvo deploy_id de Render. Mensaje: ${MSG:-desconocido}"
+      - name: Guardrails - asegurar que el tag deriva de main
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if ! git merge-base --is-ancestor origin/main "$TAG"; then
+            echo "El tag $TAG no es descendiente de main. Abortando sync."
             exit 1
           fi
 
-          echo "deploy_id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Wait until deploy is live
+      - name: Fast-forward production -> tag
         run: |
-          set -euo pipefail
-          DEPLOY_ID="${{ steps.trigger.outputs.deploy_id }}"
-          echo "Esperando deploy $DEPLOY_ID ..."
-          for i in $(seq 1 90); do
-            STATUS_JSON=$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
-              "https://api.render.com/v1/deploys/${DEPLOY_ID}")
-            PHASE=$(echo "$STATUS_JSON" | jq -r '.status')
-            echo "Intento $i → status=$PHASE"
-            if [ "$PHASE" = "live" ]; then
-              echo "✅ Deploy live"; exit 0
-            elif [ "$PHASE" = "failed" ]; then
-              echo "❌ Deploy failed"; echo "$STATUS_JSON"; exit 1
-            fi
-            sleep 10
-          done
-          echo "⏱ Timeout esperando el deploy"; exit 1
+          TAG="${GITHUB_REF_NAME}"
+          git checkout production
+          git merge --ff-only "$TAG"
+          git push origin production
