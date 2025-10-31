@@ -51,12 +51,49 @@ Implementa la estrategia de PayPal. Regla principal:
 
 Monto < 5.000.
 
-## Tests/test_payments.py
-Conjunto de tests unitarios (PyTest) para endpoints y/o reglas. Se ejecutan localmente con pytest -q desde el root del proyecto y en CI vía GitHub Actions.
+## Tests
 
-.github/workflows/ci_pipeline.yml Pipeline de CI: al crear un Pull Request hacia main, instala dependencias y ejecuta los tests. El estado de los checks aparece en el PR.
+### tests/test_payments.py
+Conjunto de tests unitarios (PyTest) para endpoints y reglas de negocio.  
+Se ejecutan:
+- localmente con `pytest -q` desde el root del proyecto
+- automáticamente en CI vía GitHub Actions
 
-.github/workflows/cd_release.yml Pipeline de CD/Release: al hacer merge en production, corre el flujo de despliegue.
+### .github/workflows/ci_pipeline.yml
+Pipeline de CI: al crear un Pull Request hacia `main`, instala dependencias y ejecuta los tests.  
+El estado de los checks aparece directamente en el PR (bloquea merges si falla).
+
+### .github/workflows/cd_release.yml
+Pipeline de CD / Release: al crear un tag `v*.*.*`, genera un Release y adelanta la rama `production` hasta ese tag.  
+Render está configurado para desplegar automáticamente cada vez que `production` cambia, por lo que esto publica la versión.
+
+---
+
+### Cobertura de pruebas automatizadas
+
+- Probamos el flujo de pago completo, incluyendo persistencia:
+  - Registrar un pago en estado `REGISTRADO`
+  - Ejecutar `/pay`
+  - Verificar que el estado final (`PAGADO` o `FALLIDO`) quede guardado en `data.json`
+
+- Probamos las reglas de negocio específicas de cada estrategia de pago (`Strategy`):
+  - **Tarjeta de crédito**: se exige `amount < 10000` y se respeta la restricción de unicidad lógica de tarjeta activa en estado `REGISTRADO`
+  - **PayPal**: se exige `amount <= 5000`
+
+- Probamos comportamiento frente a datos atípicos / input raro:
+  - `amount` pasado como string numérico (`"250"`) se acepta y se convierte correctamente
+  - `amount` no numérico (`"dosmil"`) se rechaza
+  - falta de `payment_method` al intentar pagar ⇒ el pago termina `FALLIDO` sin romper la API
+
+- Probamos operaciones de mantenimiento del ciclo de vida del pago:
+  - `revert` desde `FALLIDO` vuelve el pago a `REGISTRADO` para reintentar el cobro
+  - `update` (`/update`) solo está permitido si el pago está en `REGISTRADO`, y persiste los nuevos datos (`amount`, `payment_method`) sin cambiar el estado
+
+- Probamos políticas de integridad de la API:
+  - no se puede registrar dos veces el mismo `payment_id` (duplicado ⇒ 400)
+  - `GET /payments` devuelve un snapshot consistente del sistema después de ejecutar múltiples operaciones (pagos exitosos, pagos fallidos, etc.)
+
+
 
 ## Requirements.txt
 Versiona las dependencias para que CI/CD y los entornos locales sean reproducibles.
